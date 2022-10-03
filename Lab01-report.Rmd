@@ -1,0 +1,221 @@
+---
+pagetitle: "Lab-01-Report"
+author: "Joshua Monigatti"
+date: "28/07/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Stats 769 Lab 01
+
+## The Data Set
+
+The data set records all imports of goods with the Harmonised Systems (HS) code starting with 8703 which denotes various types of vehicles from years 2000-2021.
+It includes the year/month, HSC, HSCDescription, unit, VFD/CIF (in NZD), quantity imported and status 
+
+```{r echo=FALSE}
+writeLines(readLines("new-car-imports.csv")[1:6])
+```
+
+##Tasks 
+
+### Unix
+
+1. The following code creates a new directory to store all the files needed for Lab01 and then navigates into it. An extra line has been added to pull the needed csv files
+
+```{r, engine = 'bash', eval = FALSE}
+mkdir lab01
+cd lab01
+## Copying all of the csv files into the dir
+cp -r /course/data/vehicles/ . 
+cd vehicles
+```
+  
+2. The following line of code shows information about all the data files including the size in bytes for each of them.
+
+```{r, engine = 'bash', eval = FALSE}
+ls -l 
+```
+
+3. The following code shows the number of lines in the vehicles-2020.csv file 
+
+```{r, engine = 'bash', eval = FALSE}
+wc --lines vehicles-2020.csv 
+```
+
+4. The following code creates a new file car-imports.data from all of the records in vehicles-2001.csv to vehicles-2021.csv. 
+Following this it then list the number of lines in the new car-imports.data file. This count matches the number of lines from Lab00.
+
+```{r, engine = 'bash', eval = FALSE}
+cat vehicles-20*.csv | grep 8703231915 > car-imports.data
+wc --lines car-imports.data #Counts all of the lines in the new file 
+```
+
+5. The following code counts the occurrence of all the different HSC files and then displays the the last 5 rows in ascending order of count
+ 
+```{r, engine = 'bash', eval = FALSE}
+cat vehicles-20*.csv | awk -F, {print $2} | sort | uniq -c | sort | tail -5
+```
+
+6. The following code pulls all occurrences of imported cars matching the specified HS codes and adds them to a new csv file called new-car-imports.csv
+The line count is used to check that the number of records matches that of the csv file supplied on canvas.
+
+```{r, engine = 'bash', eval = FALSE}
+cat vehicles-20*.csv | egrep '8703218006|8703228003|8703238003|8703248003|8703211915|8703221915|8703231915|8703241915' > new-car-imports.csv
+wc --lines new-car-imports.csv
+```
+
+### Import
+
+7. The following code reads the new-car-imports.csv file into R and checks that the data has been loaded correctly
+
+```{r}
+cars = read.csv("new-car-imports.csv")
+str(cars)
+```
+
+### Clean 
+
+8. The following section of code cleans the dataframe. Variable names are converted into the easier to read formats and data types are changed into the fields that allow better data manipulation. Furthermore, a Date field is added for better representation of the time of import 
+
+```{r}
+str(cars)
+names(cars)[names(cars) == "X"] <- "Unknown"
+names(cars)[names(cars) == "Harmonised.System.Code"] <- "HSC"
+names(cars)[names(cars) == "Harmonised.System.Description"] <- "HSDescription"
+names(cars)[names(cars) == "Unit.Qty"] <- "Unit"
+names(cars)[names(cars) == "Imports...NZD.vfd."] <- "VFD"
+names(cars)[names(cars) == "Imports...NZD.cif."] <- "CIF"
+names(cars)[names(cars) == "Imports.Qty"] <- "Quantity"
+dates = cars$Month
+dates <- dates * 100 + 1
+cars$Date <- as.Date(as.character(dates), format("%Y%m%d"))
+for (col in c("VFD", "CIF", "Quantity")) cars[[col]] <- as.numeric(gsub(",","", cars[[col]]))
+str(cars)
+```
+
+### Explore
+
+9. The following plot shows the total imported value (VFD) by country
+
+```{r}
+countryVfd <- sort(xtabs(VFD ~ Country, cars))
+par(mar = c(2,10,0.5,0.5))
+barplot(countryVfd, horiz = TRUE, las = 1, cex.names = 0.8)
+```
+
+From this plot we can see that far more money is spent on importing Japanese cars as total VFD for Japan is over two times larger than that for Germany, New Zealand's second highest country for total import value. Following Japan for total imported value is Germany, the UK, Thailand and France.
+
+The above does not allow you to see all of the countries. The following plots the top countries by total import value
+
+```{r}
+par(mar = c(2,10,0.5,0.5))
+barplot(tail(countryVfd), horiz = TRUE, las = 1, cex.names = 0.8)
+```
+
+From this plot it can be seen that even among the top countries that far for money is spent on importing Japanese cars than others.
+
+Due to the highly skewed values present by the top countries the following code applies a log transformation.
+
+```{r}
+par(mar = c(2,15,0.5,0.5))
+barplot(countryVfd, horiz = TRUE, las = 1, cex.names = 0.8, log = "x")
+```
+
+
+10. The following code plots the evolution of VFD by HS code over time. The VFD is converted into millions of NZD to make it easier to see and the VFD's are aggregated over months.
+
+```{r}
+cars2 = cars
+cars2 <- transform(cars2, VFD = VFD / 1e6)
+head(cars2$VFD)
+test2 <- xtabs(VFD ~ Date + HSC, cars2)
+
+par(mar = c(4,10,2,2))
+matplot(x = unique(cars2$Date), y = test2, type = "l", xlab = "Month", ylab = "Value for Duty in millions NZD", main = "Total Monthly Import Value by HS Code", lty = 1, lwd= 1)
+```
+
+From the above plot trends can be seen from it. In 2008 most HSC codes had their imports reduced and took time to recover, this is likely due to the 2008 GFC and the subsequent recover. Further dips can be seen around 2020 which was likely a result of the Covid-19 pandemic. 
+Around 2016-2017 it can be seen that the VFD of all vehicles up to this point drop to zero or near zero. While at the same time HS code that were near or at zero now dominate the graph. This could be due to changes of regulations in NZ with relation to vehicles of these types or the reclassification of HS codes.
+
+The following R code shows that the type of vehicles being imported at the start of the time period differ greatly to those that are imported at the end of the time period Possibly reflecting this hypothesis.
+
+```{r}
+head(test2)
+tail(test2)
+
+```
+
+If the above hypothesis is correct and the HS codes have been changed but still reflect the same type of vehicles then the new and old HS codes will need to be matched to one another for consistency in dataset for further analysis.
+
+### Model 
+
+11. The following code creates a subset of imports from Germany only and then splits the resulting data into training (90%) and test (10%) sets. We also scale the `VFD` variable to millions NZD for easier interpretation. As well as this all VFD values of differeing HS codes are aggregated into a single VFD variable.
+
+```{r}
+ger <- subset(cars, Country == "Germany")
+ger <- transform(ger, VFD = VFD / 1e6)
+## Scales VFD to millions
+ger <- ger[order(ger$Date),]
+ger <- aggregate(VFD ~ Date, ger, sum)
+## Sorts the data and then aggregates them by month for all HSC
+
+RMSE <- function(obs, pred) sqrt(mean((obs - pred)^2))
+ntrain <- nrow(ger) * 0.90
+gtrain <- ger[1:ntrain,]
+gtest  <- ger[-(1:ntrain),]
+## Splits the data into training (90%) and test (10%) sets
+```
+
+We compute the global mean as a simple prediction and also fit a linear model.
+
+```{r}
+## baseline: overall mean
+(m0 <- mean(gtrain$VFD))
+## linear model
+(m1 <- lm(VFD ~ Date, gtrain))
+```
+
+We define a simple `RMSE()` function to calculate the root mean square error.
+
+```{r}
+RMSE <- function(obs, pred) sqrt(mean((obs - pred)^2))
+```
+
+We compare the predictions for the tests between the two models.
+
+```{r}
+## observed values in the test data
+obs <- gtest$VFD
+## global mean
+RMSE(obs, m0)
+## linear model prediction on the test data
+RMSE(obs, predict(m1, gtest))
+```
+
+From the above results we can see that the base line mean is better than the linear model. We then plot the results to have a better understanding of the two models. The dotted line shows the split between the training and test sets
+
+```{r}
+par(mar=c(5,8,5,8))
+plot(ger$Date, ger$VFD, ty='l', main="Monthly New Car Import Value from Germany", xlab="Year", ylab="Value for Duty (in millions NZD)")
+abline(h=m0, col=4, lwd=2)
+abline(m1, col=2, lwd=2)
+abline(v=ger$Date[ntrain + 1], lty = 2, lwd = 2)
+```
+
+Directly following the split in data from test to training sets (around the start of 2020) the total import value of German cars sharply dropped, likely as a result of the Covid-19 outbreak. The linear model is unable to capture this sharp and sudden drop while a more constant model is.
+
+COVID-19 effected all imports in 2020 which subsequently resulted in a slightly rebounded in 2021 making up for it. Therefore, any model will have difficulty accounting for the effects of COVID-19, the model above does a reasonable job given that it does not have that information. However, it may be better to adjust the test and training split for a more accurate prediction using the linear model.
+   
+From the above model it also appears to have some seasonality to the imports. This can be seen as the lines make sharp up and down movements in short periods. There is room for improvement if additional variables such month of the year were added so that it is easier to see these more subtle changes over short periods of time.
+
+
+
+### Summary
+
+In this lab we explored the overseas trade data set recording imports of particular class of cars into New Zealand. The data set first needed to be cleaned and collected into a single csv file as they were originally split into their individual years (2000-2021) and only specific cars matching the specified HS codes were to be used. Following this the data set once again needed to be cleaned when imported into R as some variables had the wrong type. After the cleaning phase we were left with imports from multiple countries from 2000-2021 which matched the specified criteria. From the information it became apparent that far more money was spent on importing cars from Japan (over two times that of the second country Germany) than other countries. The total import values by country are highly skewed, thus a transformation would be advisable for further processing.
+
+Following this we have modeled the total import value by month of cars by their HSC. It can be seen that during this the HSC had a sudden change in 2016-2017. I have hypothesized that this change was due to the change in regulation of HS codes, however this will need to be further looked into and the codes will need to be matched together if further analysis is to be undertaken for consistency.
+
+We have then focused on imports from one particular country: Germany. The total import value was increasing prior to the end of 2019, when it was then met with a sharp decline in 2020, likely as a result of the covid-19 outbreak. This sudden decrease was not captured well by a simple linear model, and was outperformed by a simple constant mean. However, there is still a lot of unexplained variation, partially due to the COVID-19 effect in years 2020/2021 and possible seasonality in the imports. Further manipulation and analysis of the information is needed for a more conclusive result.

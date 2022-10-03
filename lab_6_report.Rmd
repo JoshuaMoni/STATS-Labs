@@ -1,0 +1,317 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+pagetitle: Lab-06
+---
+
+# Stats 769 Lab 06 
+
+## The Data Set / Introduction  
+
+In this lab a subset of information collected by a bank is used. This includes information such as age, job, education, balance, loan as well as others.  
+This data can be used to solve many different problems classification problems. Such as who is likely to switch banks, will people be able to pay back loans, how likely are people to apply for loans and what is the likely hood of them defaulting on them. The data can also be used by the bank to better market their services to their customers through trend analysis and classification of customers.  
+
+The following displays the information that is stored in the csv as well as displaying a tally of some of the categorical variables. 
+
+```{r}
+data <- read.csv('bank-subset.csv', strings=TRUE)
+table(data$job)
+table(data$education)
+str(data)
+```
+
+
+### Import
+
+The following imports the needed libraries for this lab and splits the data into training and test sets.  
+The first 1000 observations are part of the training set. The remaining are part of the test set.  
+
+```{r}
+library(MASS)
+library(e1071)
+library(class)
+library(parallel)
+library(glue)
+
+bank = read.csv("bank-subset.csv", strings=TRUE)
+X = model.matrix(y ~ ., data=bank)[,-1]        # design matrix, without intercept
+i = 1:1000
+train = data.frame(X[i,], y=bank$y[i])         # training set
+test = data.frame(X[-i,], y=bank$y[-i])        # test set
+```
+
+
+
+# Basic Classification Methods
+
+2. The following code uses Linear Discriminant Analysis to predict the class labels for both the training and test set. As well as producing a confusing matrix for both.  
+
+```{r}
+# Training set 
+r = lda(y ~ ., data=train) # Setting y to be the dependent variables and using the others as the independent variables
+train_yhat = predict(r, newdata=train)$class # Estimating the y_hat 
+table(train$y, train_yhat) # confusion table
+(train_mean = mean(train$y == train_yhat))
+```
+
+Predicting on the test set using the fitted model.  
+
+```{r}
+# Predicting on the test set 
+test_yhat = predict(r, newdata=test)$class 
+table(test$y, test_yhat) # confusion table
+(test_mean = mean(test$y == test_yhat))
+```
+
+Misclassification rate of both the training and test set.  
+
+```{r}
+print(1 - train_mean)
+print(1 - test_mean)
+```
+
+From the obtained results it can be seen that the linear discriminate model is able to achieve ~90% accuracy for classification using all of the variables to predict on the test set. 
+
+
+# Naive Bayes
+
+3. The following code uses Naive Bayes to predict the class label for both the training and test set. As well as producing a confusing matrix for both.  
+
+```{r}
+r = naiveBayes(y ~ ., data=train)
+train_yhat = predict(r, newdata=train)
+table(train$y, train_yhat) # confusion table
+(train_mean = mean(train$y != train_yhat))
+```
+
+Using the fitted model to predict on the test set.  
+
+```{r}
+# Predicting on the test set 
+test_yhat = predict(r, newdata=test)
+table(test$y, test_yhat) # confusion table
+(test_mean = mean(test$y != test_yhat))
+```
+
+Misclassification rate of both the training and test set.  
+
+```{r}
+print(train_mean)
+print(test_mean)
+```
+
+From the obtained results it can be seen that Naive Bayes does a worse job at predicting the class labels of the data set than Linear Discriminant does. As the misclassification rate is greater than 20%, compared to being less than 10% in the case of Linear Discriminant.
+
+
+4. Using KNN to predict the class labels with k = 1 and k = 5 respectively.  
+
+```{r}
+set.seed(769)
+for (k in c(1,5)){
+  (train_yhat = knn(train = train[,-43], test = train[,-43], cl = train[,43], k = k))
+  print(glue('Training set Confusion matrix k = {k}'))
+  print(table(train[,43], train_yhat))
+  print(glue("Misclassification rate: {mean(train$y != train_yhat)}\n\n"))
+  
+  (test_yhat = knn(train=train[,-43], test=test[,-43], cl=train[,43], k=k))
+  print(glue('Test set confusion matrix k = {k}'))
+  print(table(test[,43], test_yhat))
+  print(glue("Misclassification rate: {mean(test$y != test_yhat)}\n\n"))
+}
+```
+
+From these results it can be seen that a k of 1 scores better when predicting for the training set. While a K of 5 scores better when predicting for the test set.  
+
+
+5. Computing the misclassification rate for the training and test set with K varying from 1 to 30
+
+
+```{r}
+set.seed(769)
+
+# Keeps track of the values at each value of k 
+training_mcr = c()
+test_mcr = c()
+
+for (k in 1:30){
+  (train_yhat = knn(train = train[,-43], test = train[,-43], cl = train[,43], k = k))
+  training_mcr = append(training_mcr, (mean(train$y != train_yhat)))
+  
+  (test_yhat = knn(train = train[,-43], test = test[,-43], cl = train[,43], k = k))
+  test_mcr = append(test_mcr, (mean(test$y != test_yhat)))
+}
+```
+
+
+Plotting the results of the above process as two different curves.  
+
+```{r}
+plot(test_mcr, type = 'o', xlim = c(1,30), ylim = c(0,0.15), xlab = "k", ylab = 'Misclassification Rate', main = 'Missclassification Rate for K = 1:30', col = 3)
+lines(training_mcr, type = 'o', col = 2)
+legend("bottomright",,c('test_mcr', 'training_mcr'), col = 2:3, lwd = 2)
+```
+
+From the above graph it can be seen that as K reaches a value of 7 the misclassification rate of both the training and test sets sit at values around 10%. 
+
+```{r}
+which.min(test_mcr) #value of k that results in the smallest Error
+min(test_mcr) # Error at this k value
+```
+From this it can be seen that the optimal value of K in KNN is 7 
+
+
+# Data Resampling 
+
+6. The following carries out 10-Fold cross-validation with 20 repetitions to find the appropriate value of K.  
+
+```{r}
+# Setting up the variables that will be used by the 10-Fold CV
+
+(n = nrow(train)) # Number of observations 
+R = 20 # number of repetitions
+M = 10 # Number of folds 
+K = 30 # Largest K-value in comparison
+
+pe = matrix(nrow=R*M, ncol=K) # pre-allocate space
+
+# Helper Function that makes sure that each fold has the correct amount of observation in it and that each fold takes the right elements as the test set
+test.set = function(i, n, K=10) {
+  index = c(0, round(1:(K-1)*n/K), n)
+  (index[i]+1):index[i+1]
+}
+```
+
+Carrying out 10-Fold CV.  
+
+```{r}
+set.seed(769) # Setting seed to make sure results are reproducible
+
+for(i in 1:R) { # For each repetition
+  ind = sample(n)  
+  for(j in 1:M) { # Each k fold
+    index = ind[test.set(j, n, M)] # Uses the helper function to collect the different folds. Allows same subsampling to be undertaken
+    local_test = train[index,]
+    local_train = train[-index,]
+    
+    for(k in 1:K) { # For each value of k 
+      yhat = knn(train = local_train[,-43], test = local_test[,-43], cl = local_train[,43], k = k) # prediction for test data
+      pe[M*(i-1)+j,k] = mean(yhat != local_test[,43])  # misclassification rate for test data
+    }
+  }
+}
+(pe3 = colMeans(pe))
+```
+
+Plotting the obtained results.  
+
+```{r}
+plot(1:K, pe3, type="o", xlab="k", ylab="pe", main = "KNN with varying k")
+```
+
+
+```{r}
+(k.optimal = which.min(pe3))
+```
+
+From carrying out this process it can be that the optimal k for 10-fold cross validation is 15.  
+Same sub sampling has been used here due to the correlated sampling. If one method tends to perform well then other methods will also tend to perform well in the same situation. As such all K values use the same training and test sets.  
+Furthermore, the computation has been decreased due to less training and test sets being generated. 
+
+
+# Jackknifing 
+
+7. Using the Jackknifing technique on the training set with a 90/10 training/test split to find the appropriate value of k.  
+
+```{r}
+R = 200 # Number of repetitions  
+K = 30 # Largest k value to consider
+n = nrow(train) # Number of observations 
+(n2 = n * 0.10) # Number of observations in the test set 
+
+pe = matrix(nrow=R, ncol=K)
+dim(pe)
+```
+
+
+The following code carries out the Jackknifing process on the training set.  
+The second method of using Jackknifing that was discussed in lectures has been used here. This was done to increase efficiency and also so that the variation is more representative of the varying values of K.  
+
+```{r}
+set.seed(769) # To make the results reproducible
+
+for(i in 1:R){ # For each iteration 
+  index = sample(n, n2) # Sample the training and test sets 
+  local_test = train[index, ] 
+  local_train = train[-index,]
+  for(j in 1:K){ # For each K value
+    yhat = knn(train=local_train[,-43], test=local_test[,-43], cl=local_train[,43], k=j) # prediction for test data
+    pe[i,j] = mean(yhat != local_test[,43])  # misclassification rate for test data
+  }
+}
+(pe1 = colMeans(pe))
+```
+
+Displaying a plot of the obtained results so that it is possible to easily visualize what happens to the prediction error as the value of k changes. 
+
+```{r}
+plot(1:K, pe1, type="o", xlab="k", ylab="pe", main = "Jackknifing with varying K")
+```
+Displaying the best value of K resulting from Jackknifing with 200 iterations and K ranging from 1 to 30.  
+
+```{r}
+(k.optimal = which.min(pe1))
+```
+
+With a seed of 769 it can be observed that as k ranges between 13 and 17 the prediction error is minimized. With the optimal value being 15.  
+
+
+8-9. Carrying out the same process as before but using while utilizing parallel computing.  
+The following code will run the same process but in parallel and with a varying cores from 1,5,10 and 20.  
+As well as this the seed has been set to 769 and the mclapply call has had mc.set.seed = TRUE, so that the results can be reproducible.  
+The RNGkind has also been changed to 'L'Ecuyer-CMRG' as this seems to be a requirement for the seed to be maintained when using parallel.  
+
+
+```{r}
+RNGkind("L'Ecuyer-CMRG") # used to reproduce the same result
+set.seed(769)
+
+# Need to run for every different variation of cores
+for(c in c(1,5,10,20)){ # For the varying number of cores
+  # Init
+  R = 200 # Number of repetitions  
+  K = 30 # Largest k value to consider
+  n = nrow(train) # Number of observations 
+  n2 = n * 0.10 # Number of observations in the test set 
+  
+  time <- system.time(l <- mclapply(1:R, function(i){
+    index = sample(n, n2) # Sample the training and test sets 
+    local_test = train[index, ] 
+    local_train = train[-index,]
+    res <- vector("list", K) # Creating a list that will store the results of the parallel run
+    for(j in 1:K){ # For each K value
+      yhat = knn(train=local_train[,-43], test=local_test[,-43], cl=local_train[,43], k=j) # prediction for test data
+      res[j] = mean(yhat != local_test[,43])  # misclassification rate for test data
+    }
+    return(res)
+  }, mc.cores = c, mc.set.seed = TRUE))
+  
+  # Mclapply returns a list so these need to be converted into a matrix 
+  pe = do.call(rbind, l)
+  pe <- matrix(as.double(pe), ncol = ncol(pe)) # Convert the type of matrix to a double so that colMeans works with it
+  print(glue("Current number of cores: {c}")) # Printing the summary of the runs
+  print(time)
+  print(glue("Optimal value of K: {which.min(colMeans(pe))}\n\n"))
+}
+```
+
+From the above process being carried out in parallel it can be seen that the run time drastically decreases as more cores are used.  
+The run time of 20 cores being used is ~10% of the run time when a single core is used. 
+
+
+# Summary
+
+In this lab we have worked with a subset of banking information to explore how different classification and sampling methods can be used with real world data.  
+In terms of classification methods we have explored the use of Linear Discriminat analysis, Naive Bayes and KNN with varying K. Of these Linear Discriminat analysis achieved the best results with a misclassification error of ~9%, which was closely followed by KNN.  
+Data Resampling has been carried out on the training set to try and workout the optimal value of K. 10-fold Cross-Validation and Jackknifing has been undertaken. Both of these process have been returned 15 as the optimal value of K when the seed was set to 769.  
+As well as this Jackknifing has been carried out in parallel through the use of mclapply. By timing the runs with varying cores it can be seen that by using up to 20 cores can drop run time by ~90%.  

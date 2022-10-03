@@ -1,0 +1,237 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+pagetitle: Lab-02
+title: "lab02-report"
+author: "Joshua Monigatti"
+---
+
+# STATS 769 Lab 02
+
+## The Data Set
+
+In this lab multiple data sets will be used include multiple sets of data from the OpenMeteo API(https://open-meteo.com/en/docs/historical-weather-api)
+and further data from the stats website (https://stat.auckland.ac.nz/~su/769/demo/nzcities.html). These data sets included information stored in json and html format that will need to be read using jsonlite and xml2 respectively
+
+For this lab we will have use a subset of the weather information that includes the high and low temperatures from years 1980-2022 for questions 1-5 and then solely high temperatures for Q6 from 2021.
+
+## Tasks
+
+### Import
+`
+1. The following code uses the curl unix command to download weather data from the OpenMeteo api into an 'akl.json' file if the file does not already exist.
+   
+```{bash eval=FALSE}
+## actually download the files if they are not present
+if [ ! -e akl.json ]; then
+  curl -o akl.json https://archive-api.open-meteo.com/v1/era5?latitude='-36.8509'\&longitude=174.7645\&start_date=1980-01-01\&end_date=2022-06-30\&daily=temperature_2m_max,temperature_2m_min\&timezone=Pacific%2FAuckland
+fi
+```
+2. The following code imports the jsonlite library and then reads the previous pulled file into an R object called jd
+
+```{r}
+library(jsonlite)
+jd = fromJSON("akl.json")
+str(jd)
+```
+
+
+### Clean
+
+3. The following code cleans the data previously read into jd and creates a new dataframe with the correct variable types
+
+```{r}
+d = data.frame(day = c(as.Date(jd$daily$time)), min = c(as.numeric(jd$daily$temperature_2m_min)), max = c(as.numeric(jd$daily$temperature_2m_max)))
+str(d)
+```
+
+### Explore
+
+4. A completeness and sanity check is undertaken below to make sure that the data pulled from the API and read into R is correct
+
+```{r}
+## Checking for completeness of the data set 
+sum(is.na(d))
+
+## Sanity checks of the data 
+sum(d$min > d$max)
+cbind(min(d$min), max(d$min), min(d$max), max(d$max))
+cbind(mean(d$min), mean(d$max))
+```
+
+As there is no na values and no min temperatures are larger than their respective maxes, as well as there being no outliers present it is safe to assume the data is correct. 
+
+
+### Model
+
+5. The following code calculates the mean of the daily high and low temperatures. Following this the yearly mean is calculated before fitting the data to training and test sets before plotting it and displaying a simple overall mean and linear regression.
+
+```{r}
+## Creating a new dataframe to hold the manipulated values
+dMean = d
+for (i in 1:nrow(dMean)) dMean$dailyMean[i] <- mean(c(dMean$min[i], dMean$max[i]))
+```
+
+The above code calculates the daily mean of each day and adds these values into the new dataframe. 
+
+```{r}
+dMean$year <- strftime(d$day, "%Y")
+## Calculating the yearly averages and adding the values to a new dataframe called avg
+avg <- data.frame(aggregate(dailyMean ~ year, dMean, mean))
+avg[["year"]] = as.integer(avg[["year"]])
+names(avg)[names(avg) == "dailyMean"] <- "avg"
+str(avg)
+```
+
+The above code creates a dataframe called avg that holds the yearly average temperatures
+
+```{r}
+## Taking years 1980-2014 as the training set 
+avgTrain <- subset(avg, year >= 1980 & year <= 2014)
+## Years 2015-2022 taken as the test set
+avgTest <- subset(avg, year > 2014)
+
+## baseline: Overall mean
+m0 <- mean(avgTrain$avg)
+## linear model
+m1 <- lm(avg ~ year, avgTrain)
+```
+
+Calculating the RMSE for the prediction of the two models on the test set
+
+```{r}
+RMSE <- function(obs, pred) sqrt(mean((obs - pred)^2))
+obs <- avgTest$avg
+## Global mean
+RMSE(obs, m0)
+## Linear model
+RMSE(obs, predict(m1, avgTest))
+```
+
+Plotting the results of the baseline and linear model
+
+```{r}
+plot(avg$year, avg$avg, type = "l", main= "Yearly Average Temperature for Auckland 1980-2022", xlab= "Year", ylab= "Average Temperature")
+abline(h=m0, col=4, lwd=2)
+abline(m1, col=2, lwd=2)
+abline(v = 2015, lty = 2)
+```
+
+Looking at the above model it can be seen that the data for 2022 is heavily skewed. This is due to only half of the data being present for 2022 and the data primarily being for the hotter months of the year. 
+
+The following code supports this hypothesis
+
+```{r}
+mean(avg$avg[1:nrow(avg) -1 ], )
+avg$avg[nrow(avg)]
+```
+
+Repeating the same process as above but this time excluding data from 2022 in the test set
+
+```{r}
+newAvg <- head(avg, -1)
+avgTrain <- subset(newAvg, year >= 1980 & year <= 2014)
+## Removing data from 2022 from the test set
+avgTest <- subset(newAvg, year > 2014 & year < 2022)
+
+m0 <- mean(avgTrain$avg)
+m1 <- lm(avg ~ year, avgTrain)
+RMSE <- function(obs, pred) sqrt(mean((obs - pred)^2))
+obs <- avgTest$avg
+RMSE(obs, m0)
+RMSE(obs, predict(m1, avgTest))
+
+plot(newAvg$year, newAvg$avg, type = "l", main= "Yearly Average Temperature for Auckland 1980-2021", xlab= "Year", ylab= "Average Temperature")
+abline(h=m0, col=4, lwd=2)
+abline(m1, col=2, lwd=2)
+abline(v = 2015, lty = 2)
+```
+
+After removing the data from 2022 the model has become less skewed.
+Looking at the two models it becomes clear that the linear model is able to out perform the baseline mean.
+The linear model is able to correctly map the rise in temperature over the time period which falls in line with the global rise in temperatures as a result of global warming.
+
+### Revisit
+
+6. In the following code a table is pulled from the stats website that holds details on the most populated cities in New Zealand as well as their latitude and longitude locations. This data is then used to pull weather temperature from the OpenMeteo API for the year of 2021 for the top 5 most populated cities and then plots the daily maximum temperature for each of them. 
+
+First xml2 is imported to read this information into R followed by the needed information being located in the html file and extracted 
+
+```{r}
+library(xml2)
+d = read_html("https://www.stat.auckland.ac.nz/~su/769/demo/nzcities.html")
+
+table <- xml_find_first(d, "//table/tbody")
+##cat(as.character(table))
+## The following call extracts the table on the website into a R object called info
+info = xml_text(xml_find_all(table, "//td"))
+```
+
+Below the information in the table is extracted into their respective variables and then combined into an R dataframe. 
+Due to how the data is stored I have used indexing to pull out the respective pieces of data.
+
+```{r}
+city <- info[seq(1, length(info), 9)]
+lat <- info[seq(2, length(info), 9)]
+lng <- info[seq(3, length(info), 9)]
+country <- info[seq(4, length(info), 9)]
+iso2 <- info[seq(5, length(info), 9)]
+admin_name <- info[seq(6, length(info), 9)]
+capital <- info[seq(7, length(info) , 9)]
+population <- info[seq(8, length(info), 9)]
+population_proper <- info[seq(9, length(info), 9)]
+cities <- data.frame(city = as.character(city), lat = as.numeric(lat), lng = as.numeric(lng), country = as.character(country), iso2 = as.character(iso2), admin_name = as.character(admin_name), capital = as.character(capital), population = as.integer(population), population_proper = as.integer(population_proper))
+str(cities)
+```
+
+The following code is used to set up the data frame used to store all of the information used for the 5 most populated cities. 
+Place holders have been used so that the information can be later read in through a loop and populated straight away.
+```{r}
+## Using the previous dMeans dataframe to get the dates for the year
+dates <- subset(dMean$day, dMean$day > "2020-12-31" & dMean$day < "2022-01-01")
+cities5 <- data.frame(days = dates)
+
+## Placeholders to later be replaced
+cities5$Auckland <- 1:365
+cities5$Wellington  <- 1:365
+cities5$Christchurch  <- 1:365
+cities5$ManukauCity <- 1:365
+cities5$Waitakere  <- 1:365
+```
+
+Looping through the top 5 most populated cities in New Zealand and extracting their latitude and longitude to make an api call. The pulled data is then manipulated to extract the temperatures before placing them into the previously constructed data frame, replacing the placeholders.
+```{r}
+for (i in 1:5){
+  ## Pulling the data from the API using the lat and lng values
+  data <- read_html(paste0("https://archive-api.open-meteo.com/v1/era5?latitude=", cities$lat[i] ,"&longitude=", cities$lng[i] ,"&start_date=2021-01-01&end_date=2021-12-31&daily=temperature_2m_max&timezone=Pacific%2FAuckland"))
+  text <- xml_text(xml_find_all(data, "//p"))
+  text = gsub(".*\\[", "", text)
+  text = gsub("\\].*", "", text)
+  val = gsub(",", " ", text)
+  ## Creating a vector of the daily data and overriding the placeholder variables
+  cities5[i + 1] <- as.numeric(unlist(strsplit(val, " ")))
+} 
+```
+
+With the extracted information it is then plotted using matplot. 
+```{r}
+col_set <- c("black", "red", "green", "blue", "cyan")
+matplot(x = cities5$days, y=cities5[2:6], type = "l", lty=1, xlab = "Day", ylab = "max.temperature", col = col_set)
+legend("bottomleft", legend = cities$city[1:5], col = col_set, lty = 1)
+
+```
+
+From the above graph it can be seen that it is hottest at the start and end of the years with large dips during winter in the middle of the year. Auckland, Manukau city and the Waitakere sit relatively close together which is to be expected as they are located near each other. For the most part Christchurch and Wellington have similar temperatures and tend to be lower than the other three. Surprisingly Christchurch reported the hottest and coldest days during this one year time period.
+
+
+## Summary
+
+12. Write a summary of your findings.
+
+In this lab we explored yearly weather data for different cities located in New Zealand. First focusing on Auckland weather data from 1980-2022 and then for the five most populated cities in NZ for 2021. 
+
+We fitted a constant mean model and a linear model, training on years 1980-2014 of the data and testing on years 2015-2022. Due to only having half of the information for 2022, the data became skewed and had to be recalculated removing data for 2022. The linear model was able to out perform the constant mean model, predicting a continued increasing in the yearly average.
+From the information it became clear that the average temperature in Auckland has been increasing over the time period observed and is predicted to continue to rise in the future. This is in line with global warming predictions as global temperatures are predicted to continue to rise in the coming years.
+	
+Following this we plotted weather temperatures for the five most populated cities in New Zealand. From this information we were able to see that cities in the North Island tend to be warmer on average than those that are located further south. Which makes sense as they are located closer to the equator. Furthermore, we were able to see that Christchurch had both the hottest and coldest day during 2021.

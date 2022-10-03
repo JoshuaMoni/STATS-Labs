@@ -1,0 +1,286 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+pagetitle: Lab-04
+title: "Lab04-report"
+author: "Joshua Monigatti"
+---
+
+# STATS 769 Lab 04
+
+## The Data Set
+
+In this lab a subset of a NYC taxi data sets will be used with trips operated by Yellow Taxi's being focused on. The data set is originally compressed in a bz2 csv file which will need to have specific parts decompressed and stored into a new text file. Furthermore, a data set for Four Square locations around the globe will be used, which includes their latitude and longitude locations as well as their type.
+
+For this lab we will have use a subset of Yellow Taxi's trip information that includes the pickup_datetime, pickup_longitude and pickup_latitude for January 8th 2010. For question 4 we focus on the pickups that occur between 8am and 9am. While for question 6 we focus on pickups that occur between 8pm and 9pm. Question's 4 and 6 also utilize the fs data set to find fs's located closest to the pickup locations.
+
+## Tasks
+
+### Import
+
+1. The following code extracts the data fields pickup_datetime, pickup_longitude and pickup_latitude from for the date 2010-10-08 and stores it in a new pickup-2010-01-08.txt
+   
+```{bash eval=FALSE}
+## Check the indices that need to be pulled
+bzcat //course/data/nyctaxi/csv/yellow_tripdata_2010-01.csv.bz2 | head
+```
+Index 2, 6, 7 are needed 
+
+```{bash}
+if [ ! -e pickup-2010-01-08.txt ]; then
+ bzcat //course/data/nyctaxi/csv/yellow_tripdata_2010-01.csv.bz2 | awk -F, '$2 ~ /2010-01-08/ {print $2”,”$6”,”$7}' > pickup-2010-01-08.txt
+fi
+```
+
+2. Reading the file into R and pre-processing the data to get it into the correct form
+
+```{r}
+pickup <- data.table::fread('pickup-2010-01-08.txt')
+names(pickup) <- c("time", "lon", "lat")
+pickup$time <- as.character(pickup$time) 
+str(pickup)
+```
+
+Sanity check of the data to make sure only information for 2010-01-08 was collected.
+
+```{r}
+unique(substr(pickup$time, 1, 10))
+```
+
+Plotting the attained data 
+
+```{r}
+plot(x = pickup$lon, y = pickup$lat, xlab = "Longitude", ylab = "Latitude", main = "Latitude and Longitude for trips in NYC on 2010-01-08")
+# Pch isn't used to make the outliers easier to see
+# snippets::osmap() # Doesnt work
+```
+
+There are some suspicious values located at the far left and top right corner. As well as some situated at the 0 long cord. These are likely due to gps devices miss recording information.
+
+3.The following code removes the outliers from the data set and then splits the data set into 24 pieces, with each pieces representing a different hour of the day 
+
+Removing outliers
+
+```{r}
+pickup <- subset(pickup, lat >= 40.4 & lat <= 41.1 & lon >= -74.5 & lon <= -73.5) 
+str(pickup)
+```
+
+Plotting the new subset to make see what it looks like after removing outliers 
+
+```{r}
+plot(x = pickup$lon, y = pickup$lat, xlab = "Longitude", ylab = "Latitude", main = "Latitude and Longitude for trips in NYC on 2010-01-08", pch = ".")
+# snippets::osmap()
+```
+
+Splitting the subset into 24 parts representing the different hours of the day
+
+```{r}
+## First extracting the time stamps into a variable called hours
+pickup$hours <- format(as.POSIXct(pickup$time), "%H:%M:%S")
+
+## Sorting the entries by hours
+pickup <- pickup[order(hours), ]
+
+## Splitting the data frame up 
+by_hour <- split(pickup, cut(strptime(pickup$hours, "%H:%M:%S"), breaks = "hours"))
+```
+
+Counting the number of trips per an hour period
+
+```{r}
+counts = c()
+
+for (i in 1:length(by_hour)){
+  counts <- append(counts, nrow(by_hour[[i]]))
+}
+```
+
+Plotting the number of trips per hours 
+
+```{r}
+#hours <- seq(from=as.POSIXct("2010-01-08 00:00:00"),to=as.POSIXct("2010-01-08 23:00:00"),by="hour")
+#hours <- substr(hours, 12, 20)
+plot(x = 0:23, y = counts, xlab = "Time of Day", ylab = "Number of trips", main = "Trips per hour")
+```
+It can be seen that in the early hours of the morning (3am - 5am) the numbers of trips decreases greatly. From 5am-8am the number of trips suddenly increases, this is likely as people start to wake up and head to work. After 9am they decrease before evening out from 10am-3pm before increasing again in the evening (4pm-7pm), likely due to people heading to after work activities and or events that will render them unable to drive. 
+
+
+4. The following code finds the closets four squares giving the latitude and longitude cordinates of pickup
+
+Collecting the four square data
+
+```{bash}
+if [ ! -e dataset_TIST2015_POIs.txt ]; then
+ cp //course/data/fsquare/dataset_TIST2015_POIs.txt . 
+fi
+```
+
+Reading the data into R and fixing the variable names
+
+```{r}
+fs <- data.table::fread("dataset_TIST2015_POIs.txt")
+names(fs) <- c("id", "lat", "lon", "type", "country")
+str(fs)
+```
+
+Taking the subset of fs locations that are in NYC. Due to the data including fs location for areas that we are not interested it will dramatically increase the run time which can easily be avoided. 
+
+```{r}
+fs <- subset(fs, lat >= 40.4 & lat <= 41.1 & lon >= -74.5 & lon <= -73.5) 
+# fs <- subset(fs, lat in 40.4:41.1 & lon in -74.5:-73.5) # Would this even work
+str(fs)
+```
+
+Checking what both data sets look like on a plot
+
+```{r}
+plot(x = pickup$lon, y = pickup$lat, xlab = "Longitude", ylab = "Latitude", pch = ".") 
+points(x = fs$lon, fs$lat, col = 2, pch = ".")
+```
+
+
+Taking a subset of the data for times between 8am-9am and turning it into a matrix
+
+```{r}
+morning <- by_hour[[9]]
+mLatLon = cbind(lat = morning$lat, lon = morning$lon)
+```
+
+Haversince distance code 
+
+The following will pull the hav.R file from its location on the VM
+
+```{bash, eval=FALSE}
+if [ ! -e hav.R ]; then
+  cp //course/data/code/hav.R . 
+fi
+```
+
+Can either read the code from the hav.R file or directly define the function in the code. I have done the latter as it is more reliable.
+
+```{r}
+# source(hav.R)
+hav <- function(m, p, r=6378137) {
+    m <- m / 180 * pi
+    p <- p / 180 *pi
+    dLat <- m[,1] - p[1]
+    dLon <- m[,2] - p[2]
+    a <- (sin(dLat/2))^2 + cos(p[1]) * cos(m[,1]) * (sin(dLon/2))^2
+    a <- pmin(a, 1)
+    2 * atan2(sqrt(a), sqrt(1 - a)) * r
+}
+```
+
+Taking a small subset of the first 1000 fs to test on first 
+
+```{r}
+test <- fs[1:1000, ]
+testLanLon = cbind(lat = test[[2]], lon = test[[3]])
+system.time(test_results <- lapply(1:nrow(mLatLon), function(i) which.min(hav(testLanLon, mLatLon[i,]))))
+```
+
+Example result from running the code on 1,000 points
+user  system elapsed 
+   5.26    0.00    5.26 
+
+
+Plotting the test example
+
+```{r eval = FALSE}
+test_type <- rev(sort(table(sapply(test_results, function(i) fs$type[i]))))
+test_type[1:20]
+par(mar=c(2,10,1.4,1))
+   barplot(rev(test_type[1:20]), horiz=TRUE, las=1, cex.names=0.8, main = "Test Barplot")
+```
+
+Running this process in parallel for all four squares. 
+
+```{r}
+library(parallel)
+fsLatLon = cbind(lat = fs[[2]], lon = fs[[3]])
+system.time(morningResults <- mclapply(1:nrow(mLatLon), function(i) which.min(hav(fsLatLon, mLatLon[i,])), mc.cores = 10))
+```
+
+Example resulting run time of the above code
+   user  system elapsed 
+166.705  15.487  21.378
+
+
+5. Running the same process of the latter part of question 4 through makeCluster rather than mclapply
+
+```{r}
+# Starting time
+start_time = Sys.time()
+# Creating a cluster of size 10 
+cl = makeCluster(10)
+
+# Exporting the variables and functions that will be used on the clusters
+clusterExport(cl, c("mLatLon", "fsLatLon", "hav"))
+
+# Sanity check 
+#clusterEvalQ(cl, ls())
+system.time(clusterResult <- clusterApply(cl, 1:nrow(mLatLon), function(i) which.min(hav(fsLatLon, mLatLon[i,]))))
+
+# Terminate the clusters 
+stopCluster(cl)
+#The overall run time of the process
+print(Sys.time() - start_time)
+```
+
+Sanity check that the result of both of these process yield the same results 
+
+```{r}
+identical(clusterResult, morningResults)
+```
+
+6. Taking a subset of the times between 8pm-9pm and doing the same analysis as in Q4
+
+```{r}
+night <- by_hour[[21]]
+nLatLon = cbind(lat = night$lat, lon = night$lon)
+system.time(nightResults <- mclapply(1:nrow(nLatLon), function(i) which.min(hav(fsLatLon, nLatLon[i,])), mc.cores = 10))
+```
+
+Creating the tables for top 20 venue types for morning
+
+```{r}
+morning_type <- rev(sort(table((sapply(morningResults, function(i) fs$type[i])))))
+morning_type[1:20]
+```
+
+Creating the tables for top 20 venue types for night
+
+```{r}
+night_type <- rev(sort(table((sapply(nightResults, function(i) fs$type[i])))))
+night_type[1:20]
+```
+
+
+Plotting both of these to give a better view
+
+```{r}
+par(mar=c(2,10,1.4,1))
+   barplot(rev(morning_type[1:20]), horiz=TRUE, las=1, cex.names=0.8, main = "Top 20 Venues for 8am-9am")
+```
+
+```{r}
+par(mar=c(2,10,1.4,1))
+   barplot(rev(night_type[1:20]), horiz=TRUE, las=1, cex.names=0.8, main = "Top 20 Venues for 8pm-9pm")
+```
+
+Commenting on the two different tables
+
+
+
+### Summary
+
+9. Write a summary of your findings.
+
+### The following needs to be edited as it is the report for Lab 3
+
+We have studied the relationship between pickup time and the number of rides taken, as well as the venue type of the closest four square location for taxi rides taken on January 8th 2010 in NYC USA based on data acquired from Yellow Taxi. The data provides many variables over time, for this lab we focused on pickup time, pickup longitude and latitude information for the trip. The acquired data had some outliers present within it which I have removed. I have split the data set into 24 pieces with each representing a different hour of the day. I have displayed the relation between the number of pickups and time of day. With the largest increases in number of trips occurring between 5am-8pm and 4pm-7pm. With other times of day either having a decreasing number of trips or subtle changes. 
+
+Finally, I have taken a subset of of the information where the pickup time is 8am-9am and 8pm-9pm. For both of these times I have found the closest four square and extracted the venue type. From this information it is possible to get a rough idea of what type of actives people are undertaking at these times of days. 
+

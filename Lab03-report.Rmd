@@ -1,0 +1,222 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+pagetitle: Lab-03
+title: "lab03-report"
+author: "Joshua Monigatti"
+---
+
+# STATS 769 Lab 03
+
+## The Data Set
+
+In this lab a subset of a NYC taxi data sets will be used and trips operated by Yellow Taxi's will be focused on. The data set is originally compressed in a bz2 csv file which will need to have specific parts decompressed and stored into a new csv. 
+
+For this lab we will have use a subset of Yellow Taxi's trip information that includes the payment_type, tip_amount and total_amount for January 2010 for questions 3-8. Questions 1 and 2 will focus on estimating efficiency through sequentially and parallel computing on the yearly data sets for Yellow Taxi.
+
+## Tasks
+
+### Import
+`
+1. The following code checks how long it will take to decompress the csv file for Yellow Taxi's January 2010 trips and uses these results to estimate how long it will take to decompress the csv's for the entire 2010 period and then and all periods
+   
+```{bash eval=FALSE}
+## actually download the files if they are not present
+time -p bzcat  //course/data/nyctaxi/csv/yellow_tripdata_2010-01.csv.bz2 | wc -l
+```
+
+Attained results: 
+Real 74.03
+User: 72.4
+Sys: 9.69
+
+Estimation for the entire 2010 year 
+Formula: Real * 12 => 74.03 * 12 = 888.36
+14 Minutes ~48 Seconds
+
+Estimation for all available CSV files
+
+To count how many CSV files there are. 
+```{bash eval=FALSE}
+ls //course/data/nyctaxi/csv/yellow_tripdata_20??-??.csv.bz2| wc -l
+```
+
+The above code displays that there are 84 csv files present
+
+Real * 84 => 74.03 * 84 = 6218.52
+1 hour 43 minutes ~39 seconds
+
+
+2. The following code is used to estimate how long it will take to decompress all csv files for Yellow Taxi's 2010 period in parallel
+
+```{bash eval=FALSE}
+time -p ls //course/data/nyctaxi/csv/yellow_tripdata_2010-??.csv.bz2 | parallel -j12 'bzcat {} | wc -l'
+```
+
+Attained results: 
+real 100.01
+user 1056.01
+sys 95.56
+
+From these result it can be seen that running in parallel is a fraction of the time that it would take to run them one at a time. 
+1 minute 40 seconds in parallel versus the 14 minutes and ~48 seconds needed to decompress them sequentially.
+
+
+3. The code below extracts the payment_type, tip_amount and total_amount for Yellow Taxi's January 2010 trip information and stores it into a new csv file.
+As a note I checked the column numbers that needed to be extracted using an egrep function call prior to this.
+
+```{bash}
+if [ ! -e tips-2010-01.csv ]; then
+  bzcat //course/data/nyctaxi/csv/yellow_tripdata_2010-01.csv.bz2 | awk -F, {'print $2, $12,$16,$18'} > tips-2010-01.csv
+fi
+```
+
+Counting the number of lines 
+
+```{bash}
+wc -l tips-2010-01.csv
+```
+
+Result: 14863780
+Payment type is a character vector with very few distinct values and both other fields are real (double-precision numeric) vectors. Assuming that the character vectors take up 8 bytes each.
+
+Thus, 14863780 * 8 * 3 = 356730720 bytes
+This is roughly equal to 357 MB 
+Assuming that a computer with 2GB of ram is able to operate and it has 357MB of available ram then it will be able to read the CSV into R 
+
+4. This reads the csv file into R and stores it into a variable called tt
+
+```{r}
+tt <- data.table::fread('tips-2010-01.csv')
+## Due to how data.tables is setup, the column names will need to be manually redefined
+names(tt) <- c("payment_type", "tip_amount", "total_amount")
+str(tt)
+```
+
+I have decided to use data.table::fread to read the csv file into R 
+Due to how data.table::fread works, I have had to rename the columns so that they are consistent.
+
+```{r}
+object.size(tt)
+```
+
+The actual size of the CSV is 356732600 bytes / 356.7326 MB. Which can be rounded to 357MB.
+This matches my estimate for Q3
+
+### Clean
+
+5. The following code cleans the data stored in tt to make it consistent for further analysis
+
+```{r}
+#Checking the current inconsistent variable names
+unique(tt$payment_type)
+tt$payment_type[tt$payment_type == "Cas"] = "CAS"
+tt$payment_type[tt$payment_type == "Cre"] = "CRE"
+unique(tt$payment_type)
+#Checking that the inconsistent variable names have been removed
+```
+
+### Explore
+
+6. Sanity check of the data to make sure that it makes sense
+
+
+```{r}
+sapply(tt, function(x) any(is.na(x)))
+## Checks that there are no na values 
+summary(tt)
+## Gives a summary of the values in tt 
+all(tt$tip_amount > tt$total_payment)
+## Checks that all payments are larger than their corresponding tip amounts
+sum(tt$tip_amount == tt$total_amount)
+hist(tt$tip_amount, xlim= c(0,20))
+```
+
+The histogram generated in the above section displays that the majority of tips are distributed between 0 and 5 dollars.
+
+
+7. Checking the relationship between the presence of tips and the payment type
+
+```{r}
+table(tt$payment_type, tt$tip_amount > 0)
+```
+From the attained results above it can be seen that people that pay by credit are far more likely to tip than those that pay by a different mean. It can also be seen that users paying by credit are the only users that have more tips paid than tips not paid. Thus, showing that there is a relationship between tipping and payment type.
+
+```{r}
+sum(tt$payment_type == 'CRE' & tt$tip_amount > 0) / sum(tt$payment_type == 'CRE')
+```
+
+The above cell shows that ~97.2% of the time credit is used as the payment option a tip is also paid.
+
+### Model 
+
+8. The following code creates takes a subset of the data that relates to trips where credit is the payment option. A new pre_tip variable is then created that stores the value of total_amount - tip_amount. 
+
+```{r}
+subtt <- subset(tt, payment_type == 'CRE')
+subtt$pre_tip <- subtt$total_amount - subtt$tip_amount
+str(subtt)
+```
+
+Next I have split the new subset into a training and test portion of 90% training and 10% test. 
+The lab doc says to randomly split the data, so I have randomly shuffled the data and taken my splits after that
+
+```{r}
+## Shuffling the data
+shuffled_data <- subtt[sample(1:nrow(subtt)), ]
+str(shuffled_data)
+
+ntrain = nrow(shuffled_data) * 0.90
+## Training split 
+subtraining <- shuffled_data[1 : ntrain,]
+## Test split 
+subtest <- shuffled_data[-(1:ntrain), ]
+```
+
+We want to predict the tip amount given the pre tip information for both the test and training sets
+```{r}
+RMSE <- function(obs, pred) sqrt(mean((obs - pred)^2))
+obs <- subtest$tip_amount
+## linear model
+(m1 <- lm(tip_amount ~ pre_tip, subtraining))
+(m2 <- lm(tip_amount ~ pre_tip, subtest))
+
+
+## linear model for training set 
+RMSE(obs, predict(m1, subtest))
+## linear model for test set 
+RMSE(obs, predict(m2, subtest))
+```
+
+From the achieved results it can be seen that the linear model from the training set is able to very accurately predict the one which is generated from the test set. This shows that the trends within the data remain constant independent of when it is sampled. The low RMSE of both shows that the linear model is able to accurately predict the value of the tip amount from the pre tip amount 
+
+The following code plots the test data 
+```{r}
+plot(x = subtest$total_amount, y = subtest$tip_amount, pch=".", xlab = "Total Amount", ylab = "Tip Amount")
+abline(m1, col = 2, lwd = 2)
+abline(m2, col = 4, lwd = 2)
+```
+
+From the above model it can be seen that the tip on average is 8% - 20% of the total amount.
+
+Checking this hypothesis in code
+
+```{r}
+has_tip <- subset(subtt, 1 - ((total_amount - tip_amount) / total_amount) > 0.08 & 1 - ((total_amount - tip_amount) / total_amount) < 0.2)
+nrow(has_tip)
+sum(subtt$tip_amount > 0)
+```
+
+The above gives the following results: has_tip has 3732687 entries, subtt has 4644423 entries with tips.
+1 - ((4644423 - 3732687) / 4644423) = 0.8036923
+Thus, showing that around 80% of trips where tips are present the tip amount ranged between 8% and 20% of the total amount.
+
+### Summary
+
+9. Write a summary of your findings.
+
+We have studied the relationship between payment type and the presence of a tip for taxi rides taken in January 2010 in NYC USA based on data acquired from Yellow Taxi. The data provides many variables over time, we focused on payment type, tip amount and total amount occurred for the trip. The acquired data is consistent, there were no gaps or obvious issues with the data quality. We displayed the relation between the payment type and the presence of a tip. From this information we were able to gather than when a user chose credit as their means of payment ~97.2% of the time they included a tip as well.  
+
+Finally, we have taken a subset of of the information where the payment type used was credit. Next this subset has been randomly shuffled and 90% has been taken as the training split and 10% as the test split. From this the liner models where generated using the training and test data, both of which scored very close to one another with low RMSE scores. From the generated graph a hypothesis was drawn that tip amount typically ranges within 8-20% of the overall trip amount, testing this showed that 80% of trips followed this.
+
